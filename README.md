@@ -25,4 +25,7 @@ Call readpng function:
 python3 readpng.py
 ```
 
-This program requires mpi to be installed.
+# Requirements:
+mpi 
+libspng
+
