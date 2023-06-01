@@ -1,83 +1,152 @@
+#include <mpi.h>
+#include <spng.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <mpi.h>
-#include "myvar.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image/stb_image.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image/stb_image_write.h"
+#define ROOT_PROCESS 0
 
-int main(int argc, char **argv) {
-    int miproc, numproc;    // Rango del proceso actual, número de procesos
-    MPI_Status status;
-    unsigned char *img = NULL;
-    int width, height, channels;
-    const char *name;
-    size_t img_size;
-    unsigned char *red_img = NULL;
+int main(int argc, char** argv) {
+    int rank, size;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    MPI_Init(&argc, &argv); /* Inicializar MPI */
-    MPI_Comm_rank(MPI_COMM_WORLD, &miproc); /* Determinar el rango del proceso invocado*/
-    MPI_Comm_size(MPI_COMM_WORLD, &numproc); /* Determinar el numero de procesos */
+    const char* input_filename = "input.png";
+    const char* output_filename = "output.png";
 
-    if (miproc == 0) { // Proceso maestro
-        if (argc < 2) {
-            printf("Selecciona tu imagen");
-            MPI_Finalize();
-            return 0;
-        }
-
-        name = argv[1];
-        img = stbi_load(name, &width, &height, &channels, 0);
-
-        if (img == NULL) {
-            printf("Error al cargar la imagen\n");
-            MPI_Finalize();
-            return 1;
-        }
-
-        printf("Imagen cargada con un ancho de %dpx, un alto de %dpx y %d canales\n", width, height, channels);
-
-        img_size = width * height * channels;
-        red_img = (unsigned char*)malloc(img_size);
-        if (red_img == NULL) {
-            printf("No se pudo asignar memoria para la imagen en escala de rojos.\n");
-            MPI_Finalize();
-            return 1;
-        }
-
-        for (unsigned char *p = img, *pr = red_img; p != img + img_size; p += channels, pr += channels) {
-            *pr = *p;        // Valor rojo del píxel
-            *(pr + 1) = 0;   // Canal verde
-            *(pr + 2) = 0;   // Canal azul
-            if (channels == 4) {
-                *(pr + 3) = *(p + 3);   // Canal de transparencia (si existe)
-            }
-        }
+    if (argc >= 2) {
+        input_filename = argv[1];
     }
 
-    MPI_Bcast(&img_size, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+    spng_ctx* ctx;
+    struct spng_ihdr ihdr;
+    unsigned char* image;
+    unsigned char* green_image;
+    size_t image_size, green_image_size;
 
-    if (miproc != 0) {
-        red_img = (unsigned char*)malloc(img_size);
-        if (red_img == NULL) {
-            printf("No se pudo asignar memoria para la imagen en escala de rojos.\n");
-            MPI_Finalize();
-            return 1;
+    if (rank == ROOT_PROCESS) {
+        // Root process reads the input image
+        FILE* input_file = fopen(input_filename, "rb");
+        if (!input_file) {
+            fprintf(stderr, "Error opening input file\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
         }
+
+        ctx = spng_ctx_new(0);
+        if (!ctx) {
+            fprintf(stderr, "Error creating spng_ctx\n");
+            fclose(input_file);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE);
+        spng_set_png_file(ctx, input_file);
+
+        int ret = spng_get_ihdr(ctx, &ihdr);
+        if (ret) {
+            fprintf(stderr, "Error getting image header: %s\n", spng_strerror(ret));
+            spng_ctx_free(ctx);
+            fclose(input_file);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        image_size = spng_decoded_image_size(ctx, SPNG_FMT_RGBA8);
+        if (image_size == 0) {
+            fprintf(stderr, "Error getting image size\n");
+            spng_ctx_free(ctx);
+            fclose(input_file);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        image = (unsigned char*)malloc(image_size);
+        if (!image) {
+            fprintf(stderr, "Error allocating memory for image\n");
+            spng_ctx_free(ctx);
+            fclose(input_file);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        ret = spng_decode_image(ctx, image, image_size, SPNG_FMT_RGBA8, 0);
+        if (ret) {
+            fprintf(stderr, "Error decoding image: %s\n", spng_strerror(ret));
+            spng_ctx_free(ctx);
+            fclose(input_file);
+            free(image);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        fclose(input_file);
     }
 
-    MPI_Bcast(red_img, img_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+    // Broadcast image header to all processes
+    MPI_Bcast(&ihdr, sizeof(struct spng_ihdr), MPI_BYTE, ROOT_PROCESS, MPI_COMM_WORLD);
 
-    if (miproc == 0) { // Proceso maestro
-        stbi_write_png("flor_rojos.png", width, height, channels, red_img, width * channels);
-        stbi_image_free(img);
-        free(red_img);
-    } else {
-        free(red_img);
+    // Calculate the portion of the image to process for each process
+    size_t image_portion_size = image_size / size;
+    size_t image_portion_start = rank * image_portion_size;
+    size_t image_portion_end = (rank == size - 1) ? image_size : image_portion_start + image_portion_size;
+
+    // Allocate memory for the green image portion
+    size_t green_image_portion_size = (image_portion_end - image_portion_start) / 4;
+    green_image = (unsigned char*)malloc(green_image_portion_size);
+    if (!green_image) {
+        fprintf(stderr, "Error allocating memory for green image portion\n");
+        spng_ctx_free(ctx);
+        free(image);
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
+    // Extract the green channel from the image portion
+    for (size_t i = 0; i < green_image_portion_size; i++) {
+        green_image[i] = image[(image_portion_start + i * 4) + 1];
+    }
+
+    // Gather the green image portions from all processes to the root process
+    MPI_Gather(green_image, green_image_portion_size, MPI_UNSIGNED_CHAR,
+               green_image, green_image_portion_size, MPI_UNSIGNED_CHAR,
+               ROOT_PROCESS, MPI_COMM_WORLD);
+
+    if (rank == ROOT_PROCESS) {
+        // Root process creates the output image
+        spng_ctx* output_ctx = spng_ctx_new(SPNG_CTX_IGNORE_ADLER32);
+        if (!output_ctx) {
+            fprintf(stderr, "Error creating spng_ctx for output image\n");
+            spng_ctx_free(ctx);
+            free(image);
+            free(green_image);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        spng_set_ihdr(output_ctx, &ihdr);
+
+        int ret = spng_set_png_file(output_ctx, fopen(output_filename, "wb"));
+        if (ret) {
+            fprintf(stderr, "Error setting PNG file for output image: %s\n", spng_strerror(ret));
+            spng_ctx_free(ctx);
+            free(image);
+            free(green_image);
+            spng_ctx_free(output_ctx);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        ret = spng_encode_image(output_ctx, green_image, green_image_size, SPNG_FMT_G8, 0);
+        if (ret) {
+            fprintf(stderr, "Error encoding output image: %s\n", spng_strerror(ret));
+            spng_ctx_free(ctx);
+            free(image);
+            free(green_image);
+            spng_ctx_free(output_ctx);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        fclose(spng_get_png_file(output_ctx));
+        spng_ctx_free(output_ctx);
+    }
+
+    free(image);
+    free(green_image);
+    spng_ctx_free(ctx);
     MPI_Finalize();
+
     return 0;
 }
