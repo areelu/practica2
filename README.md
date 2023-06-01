@@ -19,7 +19,7 @@ Compile the test2.c file:
 ```text
 mpicc -o test2 test2.c -lspng
 ```
-Compile the test2.c file:
+Call readpng function:
 
 ```text
 python3 readpng.py
