@@ -17,12 +17,12 @@ git clone https://github.com/areelu/practica2.git
 Compile the test2.c file:
 
 ```text
-mpicc test2.c -o test2
+mpicc -o test2 test2.c -lspng
 ```
 Compile the test2.c file:
 
 ```text
-mpirun -np 10 ./test2
+mpirun -np 4 ./test2
 ```
 
 This program requires mpi to be installed.
