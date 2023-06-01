@@ -51,8 +51,10 @@ class Handler:
 
     def on_button_aceptar_clicked(self, *args):
         MPIdialog.hide()
+        head_tail = os.path.split(file_path)
         np = self.getText(number_of_processors)
-        os.system('mpiexec -n '+np+' ./ring-mpi ')
+        os.system('mpiexec -n '+np+' ./example'+head_tail[1])
+        image.set_from_file(head_tail[0]+"flor.png")
         
     def on_button_cancel_clicked(self, *args):
         MPIdialog.hide()
