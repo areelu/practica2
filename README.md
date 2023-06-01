@@ -22,7 +22,7 @@ mpicc -o test2 test2.c -lspng
 Compile the test2.c file:
 
 ```text
-mpirun -np 4 ./test2
+python3 readpng.py
 ```
 
 This program requires mpi to be installed.
