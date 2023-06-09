@@ -11,19 +11,33 @@ Create a filter that performs a color transformation that works in parallel with
 
 Clone the repository:
 
+
 ```text
 git clone https://github.com/areelu/practica2.git
 ```
-Compile the test2.c file:
+Compile the rojo.c file:
 
 ```text
-mpicc -o test2 test2.c -lspng
+mpicc \-o filter rojo.c -lm
 ```
-Call readpng function:
+Run the compiled file:
 
 ```text
-python3 readpng.py
+mpiexec -n 4 ./filter "flor.png"
 ```
+If all goes well, it will give us the following results:
+
+<img src='photo3.png'>
+
+In the folder where the files are executed, an image with the filter applied will be created. In this case 'flor_rojos.png'.
+
+<img src='photo7.png'>
+
+## Results
+
+<img src='photo6.png'>
+<img src='photo5.png'>
+
 
 # Requirements:
 mpi 
