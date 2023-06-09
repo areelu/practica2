@@ -53,7 +53,7 @@ class Handler:
         MPIdialog.hide()
         head_tail = os.path.split(file_path)
         np = self.getText(number_of_processors)
-        os.system('mpiexec -n '+np+' ./test1'+head_tail[1])
+        subprocess.run("mpiexec -n"+np+" ./try "+head_tail[1], shell=True)
         image.set_from_file(head_tail[0]+"flor.png")
         
     def on_button_cancel_clicked(self, *args):
