@@ -35,11 +35,11 @@ In the folder where the files are executed, an image with the filter applied wil
 
 ## Results
 
-<img src='photo6.png'>
 <img src='photo5.png'>
+<img src='photo6.png'>
 
 
 # Requirements:
-mpi 
-spng
+- mpi 
+- spng
 
